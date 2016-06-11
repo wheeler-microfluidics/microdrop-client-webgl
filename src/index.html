@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+    <title>Microdrop client</title>
+    <script type="text/javascript" src="../libs/stats.js"></script>
+    <script type="text/javascript" src="../libs/dat.gui.js"></script>
+    <script type="text/javascript" src="../libs/three.js"></script>
+    <script type="text/javascript" src="../libs/d3-threeD.js"></script>
+    <script type="text/javascript" src="../libs/OrbitControls.js"></script>
+    <script type="text/javascript" src="../libs/two.min.js"></script>
+    <script type="text/javascript" src="../libs/svg-injector.min.js"></script>
+    <script type="text/javascript" src="../libs/jquery-1.9.0.js"></script>
+    <style>
+        body {
+            /* set margin to 0 and overflow to hidden, to go fullscreen */
+            margin: 0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+
+<video id="video" autoplay="autoplay" style="display: none;"></video>
+
+<div id="Stats-output">
+</div>
+<!-- Div which will hold the Output -->
+<div id="WebGL-output">
+</div>
+
+<div id="device" style="display:none">
+<img id="device-image" class="inject-me" data-src="device.svg">
+</div>
+
+
+<!-- Javascript code that runs our Three.js examples -->
+<script type="text/javascript">
+    var two = new Two({
+      type: Two.Types['svg'],
+    });
+
+    var orbit;
+
+    var videoElement = document.getElementById("video");
+    var gl_element = $("#WebGL-output");
+    var videoImage;
+    var videoImageContext;
+    var videoTexture;
+    var movieMaterial;
+    var movieGeometry;
+    var movieScreen;
+    var video_initialized = false;
+    var shapes;
+    var shapesGroup;
+    var stats;
+    var scene;
+    var camera;
+    var circle = {geometry: new THREE.CircleGeometry(1, 20),
+                  material: new THREE.MeshBasicMaterial({color: 0xff0000})};
+
+    // once everything is loaded, we run our Three.js stuff.
+    function load_svgs() {
+        // Elements to inject
+        var mySVGsToInject = document.querySelectorAll('img.inject-me');
+
+        // Options
+        var injectorOptions = {
+          evalScripts: 'once',
+          each: function (svg) {
+            // Callback after each SVG is injected
+            console.log('SVG injected: ' + svg.getAttribute('id'));
+          }
+        };
+
+        // Trigger the injection
+        SVGInjector(mySVGsToInject, injectorOptions, function (totalSVGsInjected) {
+          // Callback after all SVGs are injected
+          console.log('We injected ' + totalSVGsInjected + ' SVG(s)!');
+          init();
+        });
+    }
+
+    function initTextures() {
+        videoImage = document.createElement('canvas');
+        videoImage.width = $("#video").width();
+        videoImage.height = $("#video").height();
+
+        videoImageContext = videoImage.getContext('2d');
+        // background color if no video present
+        videoImageContext.fillStyle = '#000000';
+        videoImageContext.fillRect(0, 0, videoImage.width, videoImage.height);
+
+        videoTexture = new THREE.Texture(videoImage);
+        videoTexture.minFilter = THREE.LinearFilter;
+        videoTexture.magFilter = THREE.LinearFilter;
+        
+        movieMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, overdraw: false, side:THREE.DoubleSide });
+        // the geometry on which the movie will be displayed;
+        // movie image will be scaled to fit these dimensions.
+        var device_shape = two.interpret(document.querySelector("#device-image > g"));
+        // get size of device bounding box.
+        bounding_box = device_shape.getBoundingClientRect();
+        movieGeometry = new THREE.PlaneGeometry(bounding_box.width, bounding_box.height);
+        movieGeometry.applyMatrix(new THREE.Matrix4().makeTranslation(bounding_box.left + .5 * bounding_box.width,
+                                                                      bounding_box.top + .5 * bounding_box.height,
+                                                                      -0.1));
+        movieScreen = new THREE.Mesh(movieGeometry, movieMaterial);
+    }
+
+    function init() {
+        stats = initStats();
+
+        // create a scene, that will hold all our elements such as objects, cameras and lights.
+        scene = new THREE.Scene();
+
+        // create a camera, which defines where we're looking at.
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth /
+                                             window.innerHeight, 0.1, 1000);
+
+        // Test browser support
+        window.navigator = window.navigator || {};
+        navigator.getUserMedia = navigator.getUserMedia       ||
+                                 navigator.webkitGetUserMedia ||
+                                 navigator.mozGetUserMedia    ||
+                                 null;
+        // Opera <= 12.16 accepts the direct stream.
+        // More on this here: http://dev.opera.com/articles/view/playing-with-html5-video-and-getusermedia-support/
+        var createSrc = (window.URL ? window.URL.createObjectURL
+                         : function(stream) {return stream;});
+
+        // Capture user's audio and video source
+        navigator.getUserMedia({ video: true, audio: false },
+        function(stream) {
+          videoStream = stream;
+          // Stream the data
+          video.src = createSrc(stream);
+          video.play();
+        },
+        function(error) {
+          console.log("Video capture error: ", error.code);
+        });
+
+        // create a render and set the size
+        var webGLRenderer = new THREE.WebGLRenderer();
+        webGLRenderer.setClearColor(new THREE.Color(0xEEEEEE, 1.0));
+        webGLRenderer.setSize(window.innerWidth, window.innerHeight);
+        webGLRenderer.shadowMapEnabled = true;
+
+        shapes = drawShapes({});
+
+        shapesGroup = new THREE.Group();
+        // add it to the scene.
+        $.each(shapes, function (i, shape) { shapesGroup.add(shape); })
+        scene.add(shapesGroup);
+
+        // position and point the camera to the center of the scene
+        camera.position.x = 0;
+        camera.position.y = 0;
+        camera.position.z = 80;
+        camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+        var spotLight = new THREE.DirectionalLight(0xffffff);
+        spotLight.position = new THREE.Vector3(0, 0, camera.position.z);
+        spotLight.intensity = 0.7;
+
+        spotLight.target = shapes[0];
+
+        scene.add(spotLight);
+
+        // add the output of the renderer to the html element
+        document.getElementById("WebGL-output").appendChild(webGLRenderer
+                                                            .domElement);
+
+        orbit = new THREE.OrbitControls(camera, webGLRenderer.domElement);
+
+        // call the render function
+        var step = 0;
+
+        // setup the control gui
+        var controls = new function () {
+            this.amount = 0;
+            this.bevelThickness = 2;
+            this.bevelSize = 0.5;
+            this.bevelEnabled = true;
+            this.bevelSegments = 3;
+            this.bevelEnabled = false;
+            this.curveSegments = 12;
+            this.steps = 1;
+
+            this.asGeom = function () {
+                // remove the old plane
+                scene.remove(shapesGroup);
+
+                // create a new one
+
+                var options = {
+                    amount: controls.amount,
+                    bevelThickness: controls.bevelThickness,
+                    bevelSize: controls.bevelSize,
+                    bevelSegments: controls.bevelSegments,
+                    bevelEnabled: controls.bevelEnabled,
+                    curveSegments: controls.curveSegments,
+                    steps: controls.steps
+                };
+
+                shapes = drawShapes(options);
+
+                shapesGroup = new THREE.Group();
+                // add it to the scene.
+                $.each(shapes, function (i, shape) { shapesGroup.add(shape); })
+                scene.add(shapesGroup);
+            };
+
+        };
+
+        var gui = new dat.GUI();
+        gui.add(controls, 'amount', 0, 20).onChange(controls.asGeom);
+        gui.add(controls, 'bevelThickness', 0, 10).onChange(controls.asGeom);
+        gui.add(controls, 'bevelSize', 0, 10).onChange(controls.asGeom);
+        gui.add(controls, 'bevelSegments', 0,
+                30).step(1).onChange(controls.asGeom);
+        gui.add(controls, 'bevelEnabled').onChange(controls.asGeom);
+        gui.add(controls, 'curveSegments', 1,
+                30).step(1).onChange(controls.asGeom);
+        gui.add(controls, 'steps', 1, 5).step(1).onChange(controls.asGeom);
+
+        controls.asGeom();
+        render();
+
+        function drawShapes(options) {
+            return $("#device-image > g > path").map(function () {
+                var shape2d = two.interpret(this);
+                shape2d.visible = false;
+                var shape3d = extractShape(shape2d);
+                return createMesh(new THREE.ExtrudeGeometry(shape3d, options));
+            });
+        }
+
+        function createMesh(geom) {
+
+            // assign two materials
+            var meshMaterial = new THREE.MeshPhongMaterial({color: 0x333333,
+                                                            shininess: 100,
+                                                            metal: true});
+            var mesh = new THREE.Mesh(geom, meshMaterial);
+
+            return mesh;
+        }
+
+        function render() {
+            stats.update();
+
+            orbit.update();
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                if (!video_initialized) {
+                    initTextures();
+                    scene.add(movieScreen);
+                    video_initialized = true;
+                }
+                videoImageContext.drawImage( video, 0, 0 );
+                if (videoTexture) videoTexture.needsUpdate = true;
+            }
+
+            // render using requestAnimationFrame
+            requestAnimationFrame(render);
+            webGLRenderer.render(scene, camera);
+        }
+
+        function initStats() {
+            var stats = new Stats();
+            stats.setMode(0); // 0: fps, 1: ms
+
+            // Align top-left
+            stats.domElement.style.position = 'absolute';
+            stats.domElement.style.left = '0px';
+            stats.domElement.style.top = '0px';
+
+            document.getElementById("Stats-output").appendChild(stats
+                                                                .domElement);
+
+            return stats;
+        }
+
+        function extractShape(obj) {
+          var shape = new THREE.Shape();
+
+          for (var i = 0; i < obj.vertices.length; i++) {
+            var vert = obj.vertices[i];
+            var prev = obj.vertices[i - 1];
+
+            switch (vert._command) {
+
+              case Two.Commands.move:
+                shape.moveTo(vert.x, vert.y);
+                break;
+
+              case Two.Commands.line:
+                shape.lineTo(vert.x, vert.y);
+                break;
+
+              case Two.Commands.curve:
+                shape.bezierCurveTo(
+                  prev.controls.right.x + prev.x,
+                  prev.controls.right.y + prev.y,
+                  vert.controls.left.x + vert.x,
+                  vert.controls.left.y + vert.y, vert.x, vert.y
+                );
+                break;
+
+              case Two.Commands.close:
+                shape.closePath();
+                break;
+            }
+
+          }
+
+          return shape;
+        }
+        gl_element.on('mousedown', onMouseDown);
+    }
+
+
+    function onMouseDown(event) {
+        var vector = new THREE.Vector3(
+            (event.offsetX / gl_element.width()) * 2 - 1,
+            -(event.offsetY / gl_element.height()) * 2 + 1,
+            0.5);
+        vector = vector.unproject(camera);
+
+        var raycaster = new THREE.Raycaster(camera.position,
+                                            vector.sub(camera.position)
+                                            .normalize());
+
+        var intersects = raycaster.intersectObjects([movieScreen]);
+
+        if (intersects.length > 0) {
+            var intersects_i = intersects[0];
+            // Clicked on movie screen.
+            console.log(intersects[0]);
+
+            if (circle.mesh) {
+                scene.remove(circle.mesh);
+            }
+            circle.mesh = new THREE.Mesh(circle.geometry, circle.material);
+            circle.mesh.position.x = intersects_i.point.x;
+            circle.mesh.position.y = intersects_i.point.y;
+            circle.mesh.position.z = intersects_i.point.z + 0.05;
+            scene.add(circle.mesh);
+        }
+    }
+
+    window.onload = load_svgs;
+</script>
+</body>
+</html>
