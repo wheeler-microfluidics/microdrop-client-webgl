@@ -54,6 +54,7 @@
     var video_initialized = false;
     var shapes;
     var shapesGroup;
+    var filledShapes;
     var stats;
     var scene;
     var camera;
@@ -159,6 +160,9 @@
         webGLRenderer.shadowMap.enabled = true;
 
         shapes = drawShapes({});
+        filledShapes = (shapes.toArray().map(function (shape_i) {
+                            return shape_i.children[0];
+                        }));
 
         shapesGroup = new THREE.Group();
         // add it to the scene.
@@ -196,54 +200,8 @@
         var step = 0;
 
         // setup the control gui
-        var controls = new function () {
-            this.amount = 0;
-            this.bevelThickness = 2;
-            this.bevelSize = 0.5;
-            this.bevelEnabled = true;
-            this.bevelSegments = 3;
-            this.bevelEnabled = false;
-            this.curveSegments = 12;
-            this.steps = 1;
-
-            this.asGeom = function () {
-                // remove the old plane
-                scene.remove(shapesGroup);
-
-                // create a new one
-
-                var options = {
-                    amount: controls.amount,
-                    bevelThickness: controls.bevelThickness,
-                    bevelSize: controls.bevelSize,
-                    bevelSegments: controls.bevelSegments,
-                    bevelEnabled: controls.bevelEnabled,
-                    curveSegments: controls.curveSegments,
-                    steps: controls.steps
-                };
-
-                shapes = drawShapes(options);
-
-                shapesGroup = new THREE.Group();
-                // add it to the scene.
-                $.each(shapes, function (i, shape) { shapesGroup.add(shape); })
-                scene.add(shapesGroup);
-            };
-
-        };
-
         var gui = new dat.GUI();
-        gui.add(controls, 'amount', 0, 20).onChange(controls.asGeom);
-        gui.add(controls, 'bevelThickness', 0, 10).onChange(controls.asGeom);
-        gui.add(controls, 'bevelSize', 0, 10).onChange(controls.asGeom);
-        gui.add(controls, 'bevelSegments', 0,
-                30).step(1).onChange(controls.asGeom);
-        gui.add(controls, 'bevelEnabled').onChange(controls.asGeom);
-        gui.add(controls, 'curveSegments', 1,
-                30).step(1).onChange(controls.asGeom);
-        gui.add(controls, 'steps', 1, 5).step(1).onChange(controls.asGeom);
 
-        controls.asGeom();
         render();
 
         shapesGroup.traverse(function (node) {
@@ -258,17 +216,26 @@
                 var shape2d = two.interpret(this);
                 shape2d.visible = false;
                 var shape3d = extractShape(shape2d);
-                return createMesh(new THREE.ExtrudeGeometry(shape3d, options));
+
+                var options = {amount: 0, bevelEnabled: false};
+                var points = shape3d.createPointsGeometry();
+                var material = new THREE.LineBasicMaterial({color: 0xffffff,
+                                                            linewidth: 3});
+                var group = new THREE.Group();
+                var fill = createMesh(new THREE.ShapeGeometry(shape3d));
+                shape3d.autoClose = true;
+                var outline = new THREE.Line(points, material);
+                group.add(fill);
+                group.add(outline);
+                return group;
             });
         }
 
         function createMesh(geom) {
-
             // assign two materials
-            var meshMaterial = new THREE.MeshBasicMaterial({color: 0x333333});
-            var mesh = new THREE.Mesh(geom, meshMaterial);
-
-            return mesh;
+            var meshMaterial = new THREE.MeshBasicMaterial({color: 0x333333,
+                                                            wireframe: false});
+            return new THREE.Mesh(geom, meshMaterial);
         }
 
         function render() {
@@ -349,7 +316,7 @@
         mouse.y = -(event.offsetY / gl_element.height()) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
 
-        var intersects = raycaster.intersectObjects(shapes.toArray());
+        var intersects = raycaster.intersectObjects(filledShapes);
         if (intersects.length > 0) {
             console.log(mouse.x, mouse.y, intersects[0]);
         }
@@ -360,7 +327,24 @@
         mouse.y = -(event.offsetY / gl_element.height()) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
 
-        var intersects = raycaster.intersectObjects([movieScreen]);
+        var intersects = raycaster.intersectObjects(filledShapes);
+
+        if (intersects.length > 0) {
+            // Device electrode was clicked.
+            for (var i = 0; i < intersects.length; i++) {
+                var intersect_i = intersects[i];
+                var color_i = new THREE.Color(intersect_i.object.material
+                                              .color);
+                console.log(intersect_i.object.material.color);
+                console.log(color_i);
+                intersect_i.object.material.color.setRGB(1. - color_i.r,
+                                                         1. - color_i.g,
+                                                         1. - color_i.b);
+            }
+            return;
+        }
+
+        intersects = raycaster.intersectObjects([movieScreen]);
 
         if (intersects.length > 0) {
             var intersects_i = intersects[0];
